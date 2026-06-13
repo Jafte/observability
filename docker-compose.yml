@@ -1,0 +1,99 @@
+x-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "3"
+
+services:
+
+  # ─── Infrastructure ──────────────────────────────────────────────────────────
+
+  db:
+    image: postgres:18
+    restart: unless-stopped
+    logging: *default-logging
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./docker/postgres/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-postgres}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  valkey:
+    image: valkey/valkey:9
+    restart: unless-stopped
+    logging: *default-logging
+
+  # ─── GlitchTip ───────────────────────────────────────────────────────────────
+
+  glitchtip:
+    image: glitchtip/glitchtip:6
+    restart: unless-stopped
+    logging: *default-logging
+    depends_on:
+      db:
+        condition: service_healthy
+      valkey:
+        condition: service_started
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD}@db:5432/glitchtip
+      VALKEY_URL: redis://valkey:6379
+      SECRET_KEY: ${GLITCHTIP_SECRET_KEY}
+      SERVER_ROLE: all_in_one
+      GLITCHTIP_DOMAIN: ${GLITCHTIP_DOMAIN}
+      DEFAULT_FROM_EMAIL: ${DEFAULT_FROM_EMAIL:-noreply@example.com}
+      EMAIL_URL: ${EMAIL_URL:-consolemail://}
+      ENABLE_OPEN_USER_REGISTRATION: ${GLITCHTIP_ENABLE_OPEN_USER_REGISTRATION:-false}
+      # Хранить события не дольше 90 дней
+      GLITCHTIP_MAX_EVENT_LIFE_DAYS: ${GLITCHTIP_MAX_EVENT_LIFE_DAYS:-90}
+    volumes:
+      - glitchtip_uploads:/code/uploads
+    expose:
+      - "8000"
+
+  # ─── Umami ───────────────────────────────────────────────────────────────────
+
+  umami:
+    image: ghcr.io/umami-software/umami:postgresql-latest
+    restart: unless-stopped
+    logging: *default-logging
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD}@db:5432/umami
+      APP_SECRET: ${UMAMI_APP_SECRET}
+    expose:
+      - "3000"
+
+  # ─── Caddy ───────────────────────────────────────────────────────────────────
+
+  caddy:
+    image: caddy:alpine
+    restart: unless-stopped
+    logging: *default-logging
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    environment:
+      GLITCHTIP_HOST: ${GLITCHTIP_HOST}
+      UMAMI_HOST: ${UMAMI_HOST}
+    volumes:
+      - ./docker/caddy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      - glitchtip
+      - umami
+
+volumes:
+  postgres_data:
+  glitchtip_uploads:
+  caddy_data:
+  caddy_config:
