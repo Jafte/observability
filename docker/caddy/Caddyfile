@@ -1,7 +1,7 @@
-{env.GLITCHTIP_HOST} {
-    reverse_proxy glitchtip-web:8000
+{$GLITCHTIP_HOST} {
+    reverse_proxy glitchtip:8000
 }
 
-{env.UMAMI_HOST} {
+{$UMAMI_HOST} {
     reverse_proxy umami:3000
 }
